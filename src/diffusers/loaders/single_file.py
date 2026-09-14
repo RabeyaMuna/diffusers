@@ -15,7 +15,6 @@ import os
 import re
 
 from huggingface_hub.utils import validate_hf_hub_args
-from transformers import AutoFeatureExtractor
 
 from ..models.modeling_utils import load_state_dict
 from ..utils import (
@@ -122,6 +121,7 @@ def build_sub_model_components(
             safety_checker = StableDiffusionSafetyChecker.from_pretrained(
                 "CompVis/stable-diffusion-safety-checker", local_files_only=local_files_only
             )
+            from transformers import AutoFeatureExtractor
             feature_extractor = AutoFeatureExtractor.from_pretrained(
                 "CompVis/stable-diffusion-safety-checker", local_files_only=local_files_only
             )
