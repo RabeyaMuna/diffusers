@@ -555,7 +555,7 @@ class IPAdapterFaceIDStableDiffusionPipeline(
             revision=revision,
             subfolder=subfolder,
             user_agent=user_agent,
-            )
+        )
         if weight_name.endswith(".safetensors"):
             state_dict = {"image_proj": {}, "ip_adapter": {}}
             with safe_open(model_file, framework="pt", device="cpu") as f:
@@ -1438,7 +1438,7 @@ class IPAdapterFaceIDStableDiffusionPipeline(
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 6.1 Add image embeds for IP-Adapter
-        added_cond_kwargs ={"image_embeds": image_embeds} if image_embeds is not None else None
+        added_cond_kwargs = {"image_embeds": image_embeds} if image_embeds is not None else None
 
         # 6.2 Optionally get Guidance Scale Embedding
         timestep_cond = None
