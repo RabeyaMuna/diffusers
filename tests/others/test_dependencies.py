@@ -28,7 +28,9 @@ class DependencyTester(unittest.TestCase):
         import diffusers
         from diffusers.dependency_versions_table import deps
 
-        all_classes = inspect.getmembers(diffusers, inspect.isclass)
+        # Filter classes to only those defined directly in the diffusers module
+        # to avoid triggering imports of submodules.
+        all_classes = [(name, cls) for name, cls in inspect.getmembers(diffusers, inspect.isclass) if cls.__module__ == 'diffusers']
 
         for cls_name, cls_module in all_classes:
             if "dummy_" in cls_module.__module__:
@@ -43,7 +45,9 @@ class DependencyTester(unittest.TestCase):
         import diffusers
         import diffusers.pipelines
 
-        all_classes = inspect.getmembers(diffusers, inspect.isclass)
+        # Filter classes to only those defined directly in the diffusers module
+        # to avoid triggering imports of submodules.
+        all_classes = [(name, cls) for name, cls in inspect.getmembers(diffusers, inspect.isclass) if cls.__module__ == 'diffusers']
         for cls_name, cls_module in all_classes:
             if hasattr(diffusers.pipelines, cls_name):
                 pipeline_folder_module = ".".join(str(cls_module.__module__).split(".")[:3])

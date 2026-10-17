@@ -540,6 +540,7 @@ class DummyObject(type):
         if key.startswith("_") and key not in ["_load_connected_pipes", "_is_onnx"]:
             return super().__getattr__(cls, key)
         requires_backends(cls, cls._backends)
+        return super().__getattr__(cls, key)
 
 
 # This function was copied from: https://github.com/huggingface/accelerate/blob/874c4967d94badd24f893064cc3bef45f57cadf7/src/accelerate/utils/versions.py#L319
