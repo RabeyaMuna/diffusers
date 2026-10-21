@@ -1,69 +1,174 @@
 name: Run code quality checks
 
-on: push
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   check_code_quality:
     runs-on: ubuntu-latest
-    services:
-      pypi_wayback:
-        image: ghcr.io/waleko/pypi-wayback
-        ports:
-        - 8629:8080
-        options: >-
-          --health-cmd "wget -qO- http://localhost:8080/health || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-          --health-start-period 15s
+    timeout-minutes: 20
+
     steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.8'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install .[quality]
-    - name: Check quality
-      run: |
-        ruff check examples tests src utils scripts
-        ruff format examples tests src utils scripts --check
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Start optional PyPI Wayback
+        id: wayback
+        timeout-minutes: 2
+        env:
+          SNAPSHOT_URL: http://localhost:8629/2023-12-26
+        run: |
+          echo "index_url=https://pypi.org/simple" >> "$GITHUB_OUTPUT"
+          echo "use_wayback=false" >> "$GITHUB_OUTPUT"
+
+          if ! docker run -d \
+            --name pypi-wayback \
+            -p 127.0.0.1:8629:8080 \
+            ghcr.io/waleko/pypi-wayback; then
+            echo "::warning::PyPI Wayback failed to start; using official PyPI."
+            exit 0
+          fi
+
+          for attempt in $(seq 1 15); do
+            if curl --fail --silent --show-error \
+              --connect-timeout 2 --max-time 5 \
+              "$SNAPSHOT_URL/" --output /dev/null; then
+              echo "index_url=$SNAPSHOT_URL" >> "$GITHUB_OUTPUT"
+              echo "use_wayback=true" >> "$GITHUB_OUTPUT"
+              echo "PyPI Wayback is ready."
+              exit 0
+            fi
+
+            if [ "$(docker inspect -f '{{.State.Running}}' pypi-wayback 2>/dev/null || true)" != "true" ]; then
+              echo "::warning::PyPI Wayback exited during startup; using official PyPI."
+              docker logs pypi-wayback || true
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "::warning::PyPI Wayback did not become ready; using official PyPI."
+          docker logs pypi-wayback || true
+          exit 0
+
+      - name: Install dependencies
+        env:
+          INDEX_URL: ${{ steps.wayback.outputs.index_url }}
+          USE_WAYBACK: ${{ steps.wayback.outputs.use_wayback }}
+        run: |
+          python -m pip install --upgrade pip
+
+          if python -m pip install --retries 5 --timeout 30 \
+            --index-url "$INDEX_URL" ".[quality]"; then
+            echo "Dependencies installed successfully from $INDEX_URL."
+          elif [ "$USE_WAYBACK" = "true" ]; then
+            echo "::warning::Installation from PyPI Wayback failed; retrying with official PyPI."
+            python -m pip install --retries 5 --timeout 30 \
+              --index-url https://pypi.org/simple ".[quality]"
+          else
+            echo "::error::Dependency installation failed using official PyPI."
+            exit 1
+          fi
+
+      - name: Check Ruff lint
+        run: ruff check examples tests src utils scripts
+
+      - name: Check Ruff formatting
+        run: ruff format examples tests src utils scripts --check
 
   check_repository_consistency:
     runs-on: ubuntu-latest
     needs: check_code_quality
-    services:
-      pypi_wayback:
-        image: ghcr.io/waleko/pypi-wayback
-        ports:
-        - 8629:8080
-        options: >-
-          --health-cmd "wget -qO- http://localhost:8080/health || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-          --health-start-period 15s
-    steps:
-    - uses: actions/checkout@v3
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.8'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install .[quality]
-    - name: Check quality
-      run: |
-        python utils/check_copies.py
-        python utils/check_dummies.py
-        make deps_table_check_updated
+    timeout-minutes: 20
 
-env:
-  PIP_INDEX_URL: http://localhost:8629/2023-12-26
-  UV_INDEX_URL: http://localhost:8629/2023-12-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Start optional PyPI Wayback
+        id: wayback
+        timeout-minutes: 2
+        env:
+          SNAPSHOT_URL: http://localhost:8629/2023-12-26
+        run: |
+          echo "index_url=https://pypi.org/simple" >> "$GITHUB_OUTPUT"
+          echo "use_wayback=false" >> "$GITHUB_OUTPUT"
+
+          if ! docker run -d \
+            --name pypi-wayback \
+            -p 127.0.0.1:8629:8080 \
+            ghcr.io/waleko/pypi-wayback; then
+            echo "::warning::PyPI Wayback failed to start; using official PyPI."
+            exit 0
+          fi
+
+          for attempt in $(seq 1 15); do
+            if curl --fail --silent --show-error \
+              --connect-timeout 2 --max-time 5 \
+              "$SNAPSHOT_URL/" --output /dev/null; then
+              echo "index_url=$SNAPSHOT_URL" >> "$GITHUB_OUTPUT"
+              echo "use_wayback=true" >> "$GITHUB_OUTPUT"
+              echo "PyPI Wayback is ready."
+              exit 0
+            fi
+
+            if [ "$(docker inspect -f '{{.State.Running}}' pypi-wayback 2>/dev/null || true)" != "true" ]; then
+              echo "::warning::PyPI Wayback exited during startup; using official PyPI."
+              docker logs pypi-wayback || true
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "::warning::PyPI Wayback did not become ready; using official PyPI."
+          docker logs pypi-wayback || true
+          exit 0
+
+      - name: Install dependencies
+        id: install
+        env:
+          INDEX_URL: ${{ steps.wayback.outputs.index_url }}
+          USE_WAYBACK: ${{ steps.wayback.outputs.use_wayback }}
+        run: |
+          python -m pip install --upgrade pip
+
+          if python -m pip install --retries 5 --timeout 30 \
+            --index-url "$INDEX_URL" ".[quality]"; then
+            echo "index_url=$INDEX_URL" >> "$GITHUB_OUTPUT"
+            echo "Dependencies installed successfully from $INDEX_URL."
+          elif [ "$USE_WAYBACK" = "true" ]; then
+            echo "::warning::Installation from PyPI Wayback failed; retrying with official PyPI."
+            python -m pip install --retries 5 --timeout 30 \
+              --index-url https://pypi.org/simple ".[quality]"
+            echo "index_url=https://pypi.org/simple" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Dependency installation failed using official PyPI."
+            exit 1
+          fi
+
+      - name: Check repository consistency
+        env:
+          PIP_INDEX_URL: ${{ steps.install.outputs.index_url }}
+          UV_INDEX_URL: ${{ steps.install.outputs.index_url }}
+        run: |
+          python utils/check_copies.py
+          python utils/check_dummies.py
+          make deps_table_check_updated
