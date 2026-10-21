@@ -13,6 +13,12 @@ jobs:
         image: ghcr.io/waleko/pypi-wayback
         ports:
         - 8629:8080
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8080/health || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 15s
     steps:
     - uses: actions/checkout@v3
     - name: Set up Python
@@ -30,11 +36,18 @@ jobs:
 
   check_repository_consistency:
     runs-on: ubuntu-latest
+    needs: check_code_quality
     services:
       pypi_wayback:
         image: ghcr.io/waleko/pypi-wayback
         ports:
         - 8629:8080
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8080/health || exit 1"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 15s
     steps:
     - uses: actions/checkout@v3
     - name: Set up Python
@@ -52,5 +65,5 @@ jobs:
         make deps_table_check_updated
 
 env:
-  PIP_INDEX_URL: http://localhost:8629/2024-01-19
-  UV_INDEX_URL: http://localhost:8629/2024-01-19
+  PIP_INDEX_URL: http://localhost:8629/2023-12-26
+  UV_INDEX_URL: http://localhost:8629/2023-12-26
