@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   check_code_quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
 
     steps:
@@ -45,7 +45,7 @@ jobs:
           for attempt in $(seq 1 15); do
             if curl --fail --silent --show-error \
               --connect-timeout 2 --max-time 5 \
-              "$SNAPSHOT_URL/" --output /dev/null; then
+              "$SNAPSHOT_URL/" -o /dev/null; then
               echo "index_url=$SNAPSHOT_URL" >> "$GITHUB_OUTPUT"
               echo "use_wayback=true" >> "$GITHUB_OUTPUT"
               echo "PyPI Wayback is ready."
@@ -76,7 +76,7 @@ jobs:
             --index-url "$INDEX_URL" ".[quality]"; then
             echo "Dependencies installed successfully from $INDEX_URL."
           elif [ "$USE_WAYBACK" = "true" ]; then
-            echo "::warning::Installation from PyPI Wayback failed; retrying with official PyPI."
+            echo "::warning::Historical index installation failed; retrying with official PyPI."
             python -m pip install --retries 5 --timeout 30 \
               --index-url https://pypi.org/simple ".[quality]"
           else
@@ -91,7 +91,7 @@ jobs:
         run: ruff format examples tests src utils scripts --check
 
   check_repository_consistency:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: check_code_quality
     timeout-minutes: 20
 
@@ -123,7 +123,7 @@ jobs:
           for attempt in $(seq 1 15); do
             if curl --fail --silent --show-error \
               --connect-timeout 2 --max-time 5 \
-              "$SNAPSHOT_URL/" --output /dev/null; then
+              "$SNAPSHOT_URL/" -o /dev/null; then
               echo "index_url=$SNAPSHOT_URL" >> "$GITHUB_OUTPUT"
               echo "use_wayback=true" >> "$GITHUB_OUTPUT"
               echo "PyPI Wayback is ready."
@@ -156,7 +156,7 @@ jobs:
             echo "index_url=$INDEX_URL" >> "$GITHUB_OUTPUT"
             echo "Dependencies installed successfully from $INDEX_URL."
           elif [ "$USE_WAYBACK" = "true" ]; then
-            echo "::warning::Installation from PyPI Wayback failed; retrying with official PyPI."
+            echo "::warning::Historical index installation failed; retrying with official PyPI."
             python -m pip install --retries 5 --timeout 30 \
               --index-url https://pypi.org/simple ".[quality]"
             echo "index_url=https://pypi.org/simple" >> "$GITHUB_OUTPUT"
@@ -173,3 +173,4 @@ jobs:
           python utils/check_copies.py
           python utils/check_dummies.py
           make deps_table_check_updated
+
