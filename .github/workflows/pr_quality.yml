@@ -14,11 +14,11 @@ jobs:
         ports:
         - 8629:8080
         options: >-
-          --health-cmd "wget -qO- http://localhost:8080/health || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-          --health-start-period 15s
+          --health-cmd "nc -z localhost 8080"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 10s
     steps:
     - uses: actions/checkout@v3
     - name: Set up Python
@@ -43,11 +43,11 @@ jobs:
         ports:
         - 8629:8080
         options: >-
-          --health-cmd "wget -qO- http://localhost:8080/health || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-          --health-start-period 15s
+          --health-cmd "nc -z localhost 8080"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 10s
     steps:
     - uses: actions/checkout@v3
     - name: Set up Python
@@ -67,3 +67,4 @@ jobs:
 env:
   PIP_INDEX_URL: http://localhost:8629/2023-12-26
   UV_INDEX_URL: http://localhost:8629/2023-12-26
+  
