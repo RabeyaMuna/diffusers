@@ -2,6 +2,7 @@ name: Fast tests for PRs - Test Fetcher
 
 on: workflow_dispatch
 
+
 env:
   DIFFUSERS_IS_CI: yes
   OMP_NUM_THREADS: 4
@@ -12,10 +13,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   setup_pr_tests:
+    permissions:
+      contents: read
     name: Setup PR Tests
-    runs-on: docker-cpu
+    runs-on:
+      group: aws-general-8-plus
     container:
       image: diffusers/diffusers-pytorch-cpu
       options: --shm-size "16gb" --ipc host -v /mnt/hf_cache:/mnt/cache/
@@ -24,56 +30,61 @@ jobs:
         shell: bash
     outputs:
       matrix: ${{ steps.set_matrix.outputs.matrix }}
-      test_map: ${{ steps.set_matrix.outputs.test_map }}
     steps:
     - name: Checkout diffusers
-      uses: actions/checkout@v3
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
     - name: Install dependencies
       run: |
-        apt-get update && apt-get install libsndfile1-dev libgl1 -y
-        python -m pip install -e .[quality,test]
+        uv pip install -e ".[quality]"
     - name: Environment
       run: |
-        python utils/print_env.py
+        diffusers-cli env
         echo $(git --version)
     - name: Fetch Tests
+      # The checkout step only marks the workspace safe in a temporary git config, so git processes the
+      # fetcher spawns in the container would otherwise refuse the repo as dubiously owned.
       run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
         python utils/tests_fetcher.py | tee test_preparation.txt
+    - name: Report selection in job summary
+      run: |
+        if [ -f test_fetcher_summary.md ]; then
+            cat test_fetcher_summary.md >> $GITHUB_STEP_SUMMARY
+        fi
     - name: Report fetched tests
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: test_fetched
         path: test_preparation.txt
     - id: set_matrix
       name: Create Test Matrix
-      # The `keys` is used as GitHub actions matrix for jobs, i.e. `models`, `pipelines`, etc.
-      # The `test_map` is used to get the actual identified test files under each key.
-      # If no test to run (so no `test_map.json` file), create a dummy map (empty matrix will fail)
+      # `test_map.json` is a list of matrix entries `{"name", "paths", "markers"}`, one job each.
+      # If no test to run (so no `test_map.json` file), emit an empty list and skip the test job.
       run: |
         if [ -f test_map.json ]; then
-            keys=$(python3 -c 'import json; fp = open("test_map.json"); test_map = json.load(fp); fp.close(); d = list(test_map.keys()); print(json.dumps(d))')
-            test_map=$(python3 -c 'import json; fp = open("test_map.json"); test_map = json.load(fp); fp.close(); print(json.dumps(test_map))')
+            matrix=$(python3 -c 'import json; print(json.dumps(json.load(open("test_map.json"))))')
         else
-            keys=$(python3 -c 'keys = ["dummy"]; print(keys)')
-            test_map=$(python3 -c 'test_map = {"dummy": []}; print(test_map)')
+            matrix='[]'
         fi
-        echo $keys
-        echo $test_map
-        echo "matrix=$keys" >> $GITHUB_OUTPUT
-        echo "test_map=$test_map" >> $GITHUB_OUTPUT
+        echo "matrix=$matrix" >> $GITHUB_OUTPUT
+        echo "Matrix: $matrix"
 
   run_pr_tests:
-    name: Run PR Tests
+    permissions:
+      contents: read
+      id-token: write
+    name: ${{ matrix.name }}
     needs: setup_pr_tests
-    if: contains(fromJson(needs.setup_pr_tests.outputs.matrix), 'dummy') != true
+    if: needs.setup_pr_tests.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        modules: ${{ fromJson(needs.setup_pr_tests.outputs.matrix) }}
-    runs-on: docker-cpu
+        include: ${{ fromJson(needs.setup_pr_tests.outputs.matrix) }}
+    runs-on:
+      group: aws-general-8-plus
     container:
       image: diffusers/diffusers-pytorch-cpu
       options: --shm-size "16gb" --ipc host -v /mnt/hf_cache:/mnt/cache/
@@ -82,51 +93,59 @@ jobs:
         shell: bash
     steps:
     - name: Checkout diffusers
-      uses: actions/checkout@v3
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 2
 
     - name: Install dependencies
       run: |
-        apt-get update && apt-get install libsndfile1-dev libgl1 -y
-        python -m pip install -e .[quality,test]
-        python -m pip install accelerate
+        uv pip install -e ".[quality]"
+        uv pip install accelerate
 
     - name: Environment
       run: |
-        python utils/print_env.py
+        diffusers-cli env
 
     - name: Run all selected tests on CPU
+      # The gated single-file checkpoints need a Hub token, obtained through OIDC like the nightly and release
+      # workflows. Only runs that can mint an id token get the resource: a fork PR cannot, and huggingface_hub
+      # raises rather than falling back when `HF_OIDC_RESOURCE` is set with no id token, so there it is left
+      # empty and the `require_hf_token` tests skip instead.
+      env:
+        HF_OIDC_RESOURCE: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'Diffusers-CI-Bot' || '' }}
       run: |
-        python -m pytest -n 2 --dist=loadfile -v --make-reports=${{ matrix.modules }}_tests_cpu ${{ fromJson(needs.setup_pr_tests.outputs.test_map)[matrix.modules] }}
+        pytest -n 2 --dist=loadfile -m "${{ matrix.markers }}" --make-reports=${{ matrix.name }}_tests_cpu ${{ matrix.paths }}
 
     - name: Failure short reports
       if: ${{ failure() }}
       continue-on-error: true
       run: |
-        cat reports/${{ matrix.modules }}_tests_cpu_stats.txt
-        cat reports/${{ matrix.modules }}_tests_cpu_failures_short.txt
+        cat reports/${{ matrix.name }}_tests_cpu_stats.txt
+        cat reports/${{ matrix.name }}_tests_cpu_failures_short.txt
 
     - name: Test suite reports artifacts
       if: ${{ always() }}
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-          name: ${{ matrix.modules }}_test_reports
+          name: ${{ matrix.name }}_test_reports
           path: reports
 
   run_staging_tests:
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         config:
           - name: Hub tests for models, schedulers, and pipelines
             framework: hub_tests_pytorch
-            runner: docker-cpu
+            runner: aws-general-8-plus
             image: diffusers/diffusers-pytorch-cpu
             report: torch_hub
 
     name: ${{ matrix.config.name }}
-    runs-on: ${{ matrix.config.runner }}
+    runs-on:
+      group: ${{ matrix.config.runner }}
     container:
       image: ${{ matrix.config.image }}
       options: --shm-size "16gb" --ipc host -v /mnt/hf_cache:/mnt/cache/
@@ -137,23 +156,22 @@ jobs:
 
     steps:
     - name: Checkout diffusers
-      uses: actions/checkout@v3
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 2
 
     - name: Install dependencies
       run: |
-        apt-get update && apt-get install libsndfile1-dev libgl1 -y
-        python -m pip install -e .[quality,test]
+        pip install -e [quality]
 
     - name: Environment
       run: |
-        python utils/print_env.py
+        diffusers-cli env
 
     - name: Run Hub tests for models, schedulers, and pipelines on a staging env
       if: ${{ matrix.config.framework == 'hub_tests_pytorch' }}
       run: |
-        HUGGINGFACE_CO_STAGING=true python -m pytest \
+        HUGGINGFACE_CO_STAGING=true pytest \
           -m "is_staging_test" \
           --make-reports=tests_${{ matrix.config.report }} \
           tests
@@ -164,7 +182,7 @@ jobs:
 
     - name: Test suite reports artifacts
       if: ${{ always() }}
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: pr_${{ matrix.config.report }}_test_reports
         path: reports
